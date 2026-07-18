@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="art/xn_logo.png" alt="ZN-1 MiSTer banner" width="220">
+  <img src="art/XelaNotPu-LogoTransparent-GithubSocial.png" alt="ZN-1 MiSTer banner" width="220">
 </p>
 
 # Sony ZN-1 for MiSTer — Release 2026-07-17
