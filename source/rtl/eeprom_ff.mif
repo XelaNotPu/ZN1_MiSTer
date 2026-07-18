@@ -1,0 +1,10 @@
+-- AT28C16 EEPROM default initialization. Matches MAME's at28c16_device::nvram_default()
+-- which writes 0xFF to all 2KB. Without this, Taito games (psyforce, raystorm, etc) read
+-- 0x00 from BRAM defaults and display "EEPROM ERROR" / "EE PROM ERROR".
+WIDTH=32;
+DEPTH=512;
+ADDRESS_RADIX=HEX;
+DATA_RADIX=HEX;
+CONTENT BEGIN
+  [0..1FF] : FFFFFFFF;
+END;
