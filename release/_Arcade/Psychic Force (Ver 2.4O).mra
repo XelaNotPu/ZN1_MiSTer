@@ -7,16 +7,16 @@
 	<players>2</players>
 	<joystick>8-way</joystick>
 	<rotation>horizontal</rotation>
-	<rbf>XNZN1</rbf>
+	<rbf>XNZN1FXA</rbf>
 
 	<!-- BIOS: Taito FX-1 BIOS, 512KB, ioctl_index 0 -->
 	<rom index="0" zip="coh1000t.zip" md5="none">
 		<part name="m534002c-14.ic353" crc="e3f23b6e"/>
 	</rom>
 
-	<!-- Platform: Taito FX (0x02), ioctl_index 1 -->
+	<!-- Platform: Taito FX (0x02), ioctl_index 1, byte 1 = audio board 1A -->
 	<rom index="1">
-		<part>02</part>
+		<part>02 1A</part>
 	</rom>
 
 	<!-- Banked ROM: 2 banks x 8MB = 16MB, ioctl_index 3, CPU 0x1F000000 (8MB window) -->
@@ -32,6 +32,17 @@
 		<part name="e22-03.19" crc="8372f839"/>
 		<part name="e22-04.21" crc="397b71aa"/>
 		<part repeat="0x200000">00</part>
+	</rom>
+
+	<!-- Taito FX-1A sound (Z80 + YM2610B + TC0140SYT): sound CPU program, ioctl_index 6 (SDRAM 0x1800000).
+	     Z80 program 128 KiB: 0000-3FFF fixed, 4000-7FFF = bank (0xF200 & 7) x 16 KiB. -->
+	<rom index="6" zip="psyforce.zip" md5="none">
+		<part name="e22-07.22" crc="739af589"/>
+	</rom>
+
+	<!-- Taito FX-1A sound (Z80 + YM2610B + TC0140SYT): sample ROM, ioctl_index 7 (SDRAM 0x1C00000) -->
+	<rom index="7" zip="psyforce.zip" md5="none">
+		<part name="e22-01.15" crc="808b8340"/>
 	</rom>
 
 	<!-- CAT702 key A: motherboard key (tt01), 8 bytes, ioctl_index 4 -->

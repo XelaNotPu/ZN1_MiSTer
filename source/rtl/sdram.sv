@@ -73,6 +73,8 @@ module sdram
 	input              ch3_req,     // request
 	input              ch3_rnw,     // 1 - read, 0 - write
 	input      [3:0]   ch3_be,
+	input              ch3_128,     // 1 - read 128 bit (16-byte aligned line) into ch3_dout128
+	output reg [127:0] ch3_dout128,
 	output reg         ch3_ready,
 
 	input      [26:0]  dmafifo_adr,
@@ -167,6 +169,12 @@ reg [26:0]  ch3buf_addr;
 reg [31:0]  ch3buf_din; 
 reg         ch3buf_rnw; 
 reg [3:0]   ch3buf_be;
+reg         ch3buf_128;
+reg         ch3_is128 = 0;
+// ch3 anti-starvation: a ch3 request that has waited 64 clocks (~0.63us) is served
+// before ch1/ch2/dmafifo. Only reachable while ch3 is in use (Raizing sound board).
+reg   [6:0] ch3_age = 0;
+wire        ch3_urgent = ch3_age[6];
 
 always @(posedge clk_base) begin
 
@@ -263,6 +271,7 @@ always @(posedge clk) begin
    ch3buf_din  <= ch3_din;
    ch3buf_rnw  <= ch3_rnw;
    ch3buf_be   <= ch3_be;
+   ch3buf_128  <= ch3_128;
 	
 	if (ch1_ready) ch1_ready_ramclock <= 0;
 	if (ch2_ready) ch2_ready_ramclock <= 0;
@@ -278,6 +287,9 @@ always @(posedge clk) begin
 	refreshForce_req <= refreshForce_req | (refreshForce & ~refreshForce_1);
 
 	refresh_count <= refresh_count+1'b1;
+
+	if (!ch3_rq) ch3_age <= 0;
+	else if (!ch3_urgent) ch3_age <= ch3_age + 1'd1;
 
 	data_ready_delay1 <= data_ready_delay1>>1;
 	data_ready_delay2 <= data_ready_delay2>>1;
@@ -319,7 +331,16 @@ always @(posedge clk) begin
 
 	if(data_ready_delay3[7]) ch3_dout[15:00]    <= dq_reg;
 	if(data_ready_delay3[6]) ch3_dout[31:16]    <= dq_reg;
-	if(data_ready_delay3[2]) ch3_ready_ramclock <= 1;
+	if(data_ready_delay3[2] && !ch3_is128) ch3_ready_ramclock <= 1;
+	if(data_ready_delay3[7]) ch3_dout128[ 15:  0] <= dq_reg;
+	if(data_ready_delay3[6]) ch3_dout128[ 31: 16] <= dq_reg;
+	if(data_ready_delay3[5]) ch3_dout128[ 47: 32] <= dq_reg;
+	if(data_ready_delay3[4]) ch3_dout128[ 63: 48] <= dq_reg;
+	if(data_ready_delay3[3]) ch3_dout128[ 79: 64] <= dq_reg;
+	if(data_ready_delay3[2]) ch3_dout128[ 95: 80] <= dq_reg;
+	if(data_ready_delay3[1]) ch3_dout128[111: 96] <= dq_reg;
+	if(data_ready_delay3[0]) ch3_dout128[127:112] <= dq_reg;
+	if(data_ready_delay3[0] &&  ch3_is128) ch3_ready_ramclock <= 1;
 
 	SDRAM_DQ <= 16'bZ;
    
@@ -462,6 +483,18 @@ always @(posedge clk) begin
                      refresh_count <= 14'd0;
                end
 
+            end else if(ch3_rq && ch3_urgent && !lastbank_ch1_valid) begin
+               {cas_addr[12:9],SDRAM_BA,SDRAM_A,cas_addr[8:0]} <= {~ch3buf_be[1:0], ch3buf_rnw, ch3buf_addr[25:1]};
+               chip       <= ch3buf_addr[26];
+               saved_data <= ch3buf_din;
+               saved_wr   <= ~ch3buf_rnw;
+               saved_be   <= ch3buf_be;
+               ch         <= 2;
+               ch3_rq     <= 0;
+               command    <= CMD_ACTIVE;
+               state      <= STATE_WAIT;
+               saved_128read <= ch3buf_128 & ch3buf_rnw;
+               ch3_is128     <= ch3buf_128 & ch3buf_rnw;
             end else if(~dmafifo_empty) begin
                {cas_addr[12:9],SDRAM_BA,SDRAM_A,cas_addr[8:0]} <= {2'b00, 1'b0, dmafifo_adr[25:1]};
                chip         <= dmafifo_adr[26];
@@ -573,6 +606,9 @@ always @(posedge clk) begin
                command    <= CMD_ACTIVE;
                state      <= STATE_WAIT;
                lastbank_ch1_valid <= 0;
+               // 128-bit line read: same 4x burst-of-2 sequence as the ch1 cache fill
+               saved_128read <= ch3buf_128 & ch3buf_rnw;
+               ch3_is128     <= ch3buf_128 & ch3buf_rnw;
             end
          end
 

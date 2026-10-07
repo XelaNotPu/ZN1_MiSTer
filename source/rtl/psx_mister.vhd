@@ -308,6 +308,15 @@ entity psx_mister is
       zn_cat702_key   : in  std_logic_vector(63 downto 0);
       zn_cat702_key_b : in  std_logic_vector(63 downto 0);
       zn_platform     : in  std_logic_vector(3 downto 0) := "0000";
+      -- External sound board bus (memorymux.vhd, docs/AUDIO_ARCHITECTURE.md)
+      zn_ext_audio    : in  std_logic_vector(7 downto 0) := (others => '0');
+      ext_snd_wr      : out std_logic := '0';
+      ext_snd_rd      : out std_logic := '0';
+      ext_snd_addr    : out std_logic_vector(23 downto 0) := (others => '0');
+      ext_snd_din     : out std_logic_vector(31 downto 0) := (others => '0');
+      ext_snd_be      : out std_logic_vector(3 downto 0) := (others => '0');
+      ext_snd_dout    : in  std_logic_vector(31 downto 0) := (others => '0');
+      ext_snd_ack     : in  std_logic := '1';
       -- EEPROM preload (MRA ioctl index 9) -> zn1_io EEPROM BRAM
       zn_ee_dl_wr     : in  std_logic := '0';
       zn_ee_dl_addr   : in  std_logic_vector(8 downto 0) := (others => '0');
@@ -726,6 +735,14 @@ begin
       zn_cat702_key   => zn_cat702_key,
       zn_cat702_key_b => zn_cat702_key_b,
       zn_platform     => zn_platform,
+      zn_ext_audio    => zn_ext_audio,
+      ext_snd_wr      => ext_snd_wr,
+      ext_snd_rd      => ext_snd_rd,
+      ext_snd_addr    => ext_snd_addr,
+      ext_snd_din     => ext_snd_din,
+      ext_snd_be      => ext_snd_be,
+      ext_snd_dout    => ext_snd_dout,
+      ext_snd_ack     => ext_snd_ack,
       zn_ee_dl_wr     => zn_ee_dl_wr,
       zn_ee_dl_addr   => zn_ee_dl_addr,
       zn_ee_dl_data   => zn_ee_dl_data,

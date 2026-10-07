@@ -142,6 +142,21 @@ entity memorymux is
       zn_platform          : in  std_logic_vector(3 downto 0) := "0000";
       -- B-inst5: live bank register readout for the JTAG instrument (BR2 bank-2 probe)
       dbg_zn_bank          : out std_logic_vector(2 downto 0) := (others => '0');
+      -- External sound board bus (docs/AUDIO_ARCHITECTURE.md). zn_ext_audio is the
+      -- active board ID from the MRA (0 = none); that board's PSX window is forwarded:
+      --   0x10 Raizing/Eighting : writes 0x1FB00000-0x1FB00007 (latch, IRQ2)
+      --   0x1A Taito FX-1A      : 0x1FB80000-0x1FB80003 (TC0140SYT)
+      -- ext_snd_wr/rd are one-clock pulses; addr is the byte address & 0xFFFFFF, din/be
+      -- are in bus-lane format; a read completes on ext_snd_ack with the 32-bit word in
+      -- bus-lane format (rotated here like any 32-bit peripheral).
+      zn_ext_audio         : in  std_logic_vector(7 downto 0) := (others => '0');
+      ext_snd_wr           : out std_logic := '0';
+      ext_snd_rd           : out std_logic := '0';
+      ext_snd_addr         : out std_logic_vector(23 downto 0) := (others => '0');
+      ext_snd_din          : out std_logic_vector(31 downto 0) := (others => '0');
+      ext_snd_be           : out std_logic_vector(3 downto 0) := (others => '0');
+      ext_snd_dout         : in  std_logic_vector(31 downto 0) := (others => '0');
+      ext_snd_ack          : in  std_logic := '1';
 
       spu_memctrl          : in  unsigned(13 downto 0);
       bus_spu_addr         : out unsigned(9 downto 0) := (others => '0'); 
@@ -236,6 +251,7 @@ architecture arch of memorymux is
       BUSREAD_CDSTUB,
       BUSREAD_UNKNOWNIO,
       BUSREAD_SNDSTUB,   -- Taito FX-1B/1Z sound-comm read stub (returns 0)
+      BUSREAD_EXTSND,    -- external sound board read, waits for ext_snd_ack
       FRAMWAIT,          -- Taito FRAM: 1 cycle for the M10K to register fram_addr
       BUSREAD_FRAM,      -- Taito FX-1B/1Z FM1208S FRAM read completion
       WAITING,
@@ -377,6 +393,8 @@ architecture arch of memorymux is
 
    signal addressData_buf        : unsigned(31 downto 0);
    signal dataWrite_buf          : std_logic_vector(31 downto 0);
+   -- external sound board read timeout (a board that does not answer reads 0)
+   signal ext_snd_wait           : unsigned(7 downto 0) := (others => '0');
    signal reqsize_buf            : unsigned(1 downto 0);   
    signal writeMask_buf          : std_logic_vector(3 downto 0);
             
@@ -716,6 +734,8 @@ begin
          mem_done_buf         <= '0';
          reset_exe            <= '0';
          fram_wren            <= '0';   -- Taito FRAM write is a 1-cycle pulse from IDLE
+         ext_snd_wr           <= '0';
+         ext_snd_rd           <= '0';
 
          if (loadExe = '1') then
             loadExe_latched <= '1';
@@ -1084,6 +1104,25 @@ begin
                               zn_bank_8mb <= "0" & mem_dataWrite(17 downto 16);
                               rom_buf_valid <= '0';
                               state       <= BUSWRITE;
+                           elsif ((zn_ext_audio = x"10" and mem_rnw = '0' and
+                                   mem_addressData(28 downto 0) >= 16#1FB00000# and mem_addressData(28 downto 0) < 16#1FB00008#) or
+                                  (zn_ext_audio = x"1A" and
+                                   mem_addressData(28 downto 0) >= 16#1FB80000# and mem_addressData(28 downto 0) < 16#1FB80004#)) then
+                              -- External sound board window (see the port description). Raizing
+                              -- 0x1FB00000 is free on that platform; the Taito FRAM (0x1FB00000) and
+                              -- bank register (0x1FB40000) decodes above keep priority.
+                              ext_snd_addr <= std_logic_vector(mem_addressData(23 downto 0));
+                              ext_snd_din  <= mem_dataWrite;
+                              ext_snd_be   <= mem_writeMask;
+                              if (mem_rnw = '1') then
+                                 ext_snd_rd   <= '1';
+                                 ext_snd_wait <= (others => '0');
+                                 state        <= BUSREAD_EXTSND;
+                              else
+                                 ext_snd_wr    <= '1';
+                                 rom_buf_valid <= '0';
+                                 state         <= BUSWRITE;
+                              end if;
                            elsif (mem_rnw = '0' and zn_platform = "0100" and
                                   (mem_addressData(28 downto 0) = 16#1FB00006# or
                                    mem_addressData(28 downto 0) = 16#1FB00004#)) then
@@ -1347,6 +1386,21 @@ begin
                   mem_dataRead_buf <= x"00000000";
                   mem_done_buf     <= '1';
                   state            <= IDLE;
+
+               when BUSREAD_EXTSND =>
+                  -- external sound board read: rotate the bus-lane word by the request offset
+                  ext_snd_wait <= ext_snd_wait + 1;
+                  if (ext_snd_ack = '1' or ext_snd_wait = x"FF") then
+                     case (addressData_buf(1 downto 0)) is
+                        when "00"   => mem_dataRead_buf <=              ext_snd_dout;
+                        when "01"   => mem_dataRead_buf <= x"00"     & ext_snd_dout(31 downto  8);
+                        when "10"   => mem_dataRead_buf <= x"0000"   & ext_snd_dout(31 downto 16);
+                        when others => mem_dataRead_buf <= x"000000" & ext_snd_dout(31 downto 24);
+                     end case;
+                     if (ext_snd_ack = '0') then mem_dataRead_buf <= (others => '0'); end if;
+                     mem_done_buf <= '1';
+                     state        <= IDLE;
+                  end if;
 
                when FRAMWAIT =>
                   -- M10K registered fram_addr this cycle; q_a valid next cycle (BUSREAD_FRAM).

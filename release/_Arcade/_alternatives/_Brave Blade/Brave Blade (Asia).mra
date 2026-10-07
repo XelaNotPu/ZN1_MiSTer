@@ -8,30 +8,44 @@
 	<joystick>8-way</joystick>
 	<rotation>vertical</rotation>
 	<region>Asia</region>
-	<rbf>XNZN1</rbf>
+	<rbf>XNZN1RZ</rbf>
 
 	<!-- BIOS: Tecmo TPS System BIOS (used by brvblade), 512KB, ioctl_index 0 -->
 	<rom index="0" zip="coh1002m.zip" md5="none">
 		<part name="m534002c-61.ic353" crc="69ffbcb4"/>
 	</rom>
 
-	<!-- Platform: Raizing (0x01), ioctl_index 1 -->
+	<!-- Platform: Raizing (0x01), ioctl_index 1, byte 1 = audio board 10 -->
 	<!-- brvblade uses Tecmo BIOS hardware but Raizing banking (0x1FA10300) -->
 	<rom index="1">
-		<part>01</part>
+		<part>01 10</part>
 	</rom>
 
-	<!-- Banked ROM: 3 banks x 8MB = 24MB, ioctl_index 3, CPU 0x1F000000 (8MB window) -->
+	<!-- Banked ROM: 2 banks x 8MB = 16MB, ioctl_index 3, CPU 0x1F000000 (8MB window) -->
 	<!-- Bank 0: flash0 (2MB) + flash1 (2MB) + 4MB empty                        -->
 	<!-- Bank 1: rom1 (4MB) + 4MB empty                                         -->
-	<!-- Bank 2: 8MB empty                                                       -->
+	<!-- Bank 2 (never selected by the game) holds the sound ROMs below         -->
 	<rom index="3" zip="brvbladea.zip|brvblade.zip" md5="none">
 		<part name="flash0.021" crc="97e12c63"/>
 		<part name="flash1.024" crc="d9d40a34"/>
 		<part repeat="0x400000">00</part>
 		<part name="ra-bbl_rom1.028" crc="418535e0"/>
 		<part repeat="0x400000">00</part>
-		<part repeat="0x800000">00</part>
+	</rom>
+
+	<!-- Raizing/Eighting sound board (68000 + YMF271): sound CPU program, ioctl_index 6 (SDRAM 0x1800000).
+	     MAME ROM_LOAD16_BYTE: spu0u049 = even bytes, spu1u412 = odd bytes.
+	     (spu* are sound-CPU program ROMs, not PlayStation SPU data.) -->
+	<rom index="6" zip="brvblade.zip" md5="none">
+		<interleave output="16">
+			<part name="spu0u049.bin" crc="c9df8ed9" map="01"/>
+			<part name="spu1u412.bin" crc="6408b5b2" map="10"/>
+		</interleave>
+	</rom>
+
+	<!-- Raizing/Eighting sound board (68000 + YMF271): sample ROM, ioctl_index 7 (SDRAM 0x1C00000) -->
+	<rom index="7" zip="brvblade.zip" md5="none">
+		<part name="ra-bbl_rom2.336" crc="cd052c02"/>
 	</rom>
 
 	<!-- CAT702 key A: motherboard key (mg01 from Tecmo BIOS), 8 bytes, ioctl_index 4 -->

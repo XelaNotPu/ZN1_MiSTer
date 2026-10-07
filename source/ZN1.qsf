@@ -308,3 +308,6 @@ set_instance_assignment -name WEAK_PULL_UP_RESISTOR ON -to SD_SPI*
 set_instance_assignment -name WEAK_PULL_UP_RESISTOR ON -to USER_IO[*]
 set_instance_assignment -name WEAK_PULL_UP_RESISTOR ON -to VGA_EN
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/ddram_rotate_arb.sv
+# External sound boards: the PSX core and the MiSTer framework already use 110 of the
+# 112 DSP blocks, so the sound boards' multipliers are built from logic.
+set_instance_assignment -name DSP_BLOCK_BALANCING "LOGIC ELEMENTS" -to "emu:emu|zn_ext_audio:ext_audio|taito_fx1a:taito_fx1a"

@@ -69,7 +69,11 @@ module pause_overlay (
    // logo maps onto the SHORTER screen axis (Lw = display height), so scale it
    // down by a power of two until it fits — keeping the whole logo visible and
    // centred instead of clipped. lsh = log2(scale): 0→512, 1→256, 2→128.
-   wire [1:0]  lsh = (~vertical)            ? 2'd0 :
+   // Positioning values below change at most once per frame (display size is
+   // re-measured in vblank), so they are registered: they settle a few clocks
+   // after the size update, and the per-pixel compares start from flops.
+   reg  [1:0]  lsh;
+   wire [1:0]  lsh_c = (~vertical)          ? 2'd0 :
                      (Lw >= LOGO_W)         ? 2'd0 :
                      (Lw >= (LOGO_W >> 1))  ? 2'd1 : 2'd2;
    wire [11:0] LOGO_DW = LOGO_W >> lsh;   // on-screen logo width  (512/256/128)
@@ -80,16 +84,23 @@ module pause_overlay (
    // where the nudge would shove the logo off-centre — so drop it there.
    localparam [11:0] LOGO_Y_NUDGE = 12'd16;
    wire [11:0] logo_nudge = vertical ? 12'd0 : LOGO_Y_NUDGE;
-   wire [11:0] LOGO_X_START = (Lw > LOGO_DW) ? ((Lw - LOGO_DW) >> 1) : 12'd0;
-   wire [11:0] LOGO_Y_START = (Lh > LOGO_DH) ? (((Lh - LOGO_DH) >> 1) + logo_nudge) : logo_nudge;
+   reg  [11:0] LOGO_X_START, LOGO_Y_START;
+   wire [11:0] logo_x_start_c = (Lw > LOGO_DW) ? ((Lw - LOGO_DW) >> 1) : 12'd0;
+   wire [11:0] logo_y_start_c = (Lh > LOGO_DH) ? (((Lh - LOGO_DH) >> 1) + logo_nudge) : logo_nudge;
 
    // Text band is centred along its short axis (the 256-px reading width) and
    // spans the long axis as a scrolling marquee. When the canvas is narrower
    // than the band, centre the visible slice with a symmetric source offset.
-   wire [11:0] TEXT_X_START = (Lw > TEXT_WIDTH) ? ((Lw - TEXT_WIDTH) >> 1) : 12'd0;
-   wire [11:0] TEXT_SRCX    = (Lw < TEXT_WIDTH) ? ((TEXT_WIDTH - Lw) >> 1) : 12'd0;
+   reg  [11:0] TEXT_X_START, TEXT_SRCX, TEXT_Y_END;
    wire [11:0] TEXT_Y_START = 12'd0;
-   wire [11:0] TEXT_Y_END   = Lh;
+   always @(posedge clk) begin
+      lsh          <= lsh_c;
+      LOGO_X_START <= logo_x_start_c;
+      LOGO_Y_START <= logo_y_start_c;
+      TEXT_X_START <= (Lw > TEXT_WIDTH) ? ((Lw - TEXT_WIDTH) >> 1) : 12'd0;
+      TEXT_SRCX    <= (Lw < TEXT_WIDTH) ? ((TEXT_WIDTH - Lw) >> 1) : 12'd0;
+      TEXT_Y_END   <= Lh;
+   end
 
    // ----- Pixel counters from blank signals + per-frame size detection -----
    reg [11:0] px = 0, py = 0;
@@ -165,8 +176,11 @@ module pause_overlay (
    // With vertical=0 this collapses to the upright/180 path (bit-identical to the
    // horizontal behaviour); direction of the 90/270 pair is chosen by the flip
    // toggle, exactly as a vertical title's own rotate180 selects its up/down.
-   wire [11:0] disp_w_m1 = (disp_w != 0) ? (disp_w - 12'd1) : 12'd0;
-   wire [11:0] disp_h_m1 = (disp_h != 0) ? (disp_h - 12'd1) : 12'd0;
+   reg  [11:0] disp_w_m1, disp_h_m1;   // registered, see note at lsh
+   always @(posedge clk) begin
+      disp_w_m1 <= (disp_w != 0) ? (disp_w - 12'd1) : 12'd0;
+      disp_h_m1 <= (disp_h != 0) ? (disp_h - 12'd1) : 12'd0;
+   end
    reg  [11:0] rpx, rpy;
    always @* begin
       case ({vertical, rotate180})
