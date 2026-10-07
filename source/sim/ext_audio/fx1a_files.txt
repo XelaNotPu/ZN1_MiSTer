@@ -1,0 +1,1 @@
+rtl/taito_fx1a/tv80_auto_ss.sv rtl/taito_fx1a/jt10_auto_ss.sv rtl/taito_fx1a/taito_fx1a.sv

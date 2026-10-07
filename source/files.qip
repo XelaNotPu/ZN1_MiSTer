@@ -2,6 +2,16 @@ set_global_assignment -name QIP_FILE rtl/psx.qip
 set_global_assignment -name QIP_FILE rtl/mem.qip
 set_global_assignment -name QIP_FILE rtl/pll2.qip
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/sdram.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/fx68k/fx68k.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/fx68k/fx68kAlu.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/fx68k/uaddrPla.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/raizing_snd/ymf_regram.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/raizing_snd/ymf271.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/raizing_snd/raizing_snd.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/taito_fx1a/tv80_auto_ss.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/taito_fx1a/jt10_auto_ss.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/taito_fx1a/taito_fx1a.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/zn_ext_audio.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/ddram.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/ddram_rotate_arb.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/savestate_ui.sv

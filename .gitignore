@@ -1,0 +1,4 @@
+local/
+# simulation build products
+source/sim/**/obj*/
+source/sim/**/*.exe

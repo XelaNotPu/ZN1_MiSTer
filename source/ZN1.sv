@@ -186,7 +186,7 @@ assign {UART_RTS, UART_TXD, UART_DTR} = 0;
 assign AUDIO_S   = 1;
 assign AUDIO_MIX = status[8:7];
 
-assign LED_USER  = bios_download | fixedrom_download | bankedrom_download;
+assign LED_USER  = bios_download | fixedrom_download | bankedrom_download | sndprog_download | sndsmp_download;
 assign LED_DISK  = 0;
 assign LED_POWER = 0;
 assign BUTTONS   = 0;
@@ -565,19 +565,39 @@ hps_ext hps_ext
 //   0x0400000-0x047FFFF: BIOS       (512KB) — ioctl_index 0, CPU 0x1FC00000
 //   0x0480000-0x06FFFFF: Fixed ROM  (2.5MB) — ioctl_index 2, CPU 0x1F000000
 //   0x0800000-0x3FFFFFF: Banked ROM (up to 56MB, 7 banks×8MB) — ioctl_index 3, CPU 0x1F000000
+//   Raizing sound board (Brave Blade), placed in the otherwise unused banked-ROM bank 2
+//   (the game only selects banks 0 and 1):
+//   0x1800000-0x18FFFFF: 68000 program (1MB interleaved, 512KB used) — ioctl_index 6
+//   0x1C00000-0x1FFFFFF: YMF271 sample ROM (4MB)                     — ioctl_index 7
 localparam BIOS_START      = 27'h0400000;
 localparam FIXEDROM_START  = 27'h0480000;
 localparam BANKEDROM_START = 27'h0800000;
+localparam SNDPROG_START   = 27'h1800000;
+localparam SNDSMP_START    = 27'h1C00000;
 
 reg bios_download, fixedrom_download, bankedrom_download, code_download;
 reg eeprom_download;
+reg sndprog_download, sndsmp_download;
 always @(posedge clk_1x) begin
 	bios_download       <= ioctl_download & (ioctl_index[5:0] == 0);
 	fixedrom_download   <= ioctl_download & (ioctl_index == 2);
 	bankedrom_download  <= ioctl_download & (ioctl_index == 3);
+	sndprog_download    <= ioctl_download & (ioctl_index == 6);
+	sndsmp_download     <= ioctl_download & (ioctl_index == 7);
 	eeprom_download     <= ioctl_download & (ioctl_index == 9);   // AT28C16 EEPROM preload -> zn1_io
 	code_download       <= ioctl_download & (ioctl_index == 255);
 end
+
+// External sound board (rtl/zn_ext_audio.sv): runs only when the MRA selected the
+// board compiled into this RBF (index 1 byte 1) and supplied both of its ROMs.
+reg snd_prog_loaded = 0, snd_smp_loaded = 0;
+always @(posedge clk_1x) begin
+	if (bios_download) begin snd_prog_loaded <= 0; snd_smp_loaded <= 0; end
+	if (sndprog_download) snd_prog_loaded <= 1;
+	if (sndsmp_download)  snd_smp_loaded  <= 1;
+end
+wire snd_enable;            // board running (owns SDRAM channel 3 after the download)
+wire rom_download = bios_download | fixedrom_download | bankedrom_download | sndprog_download | sndsmp_download;
 
 // EEPROM preload writer (MRA index 9). 16-bit ioctl_dout carries 2 bytes (little-endian:
 // ioctl_dout[7:0]=even byte, [15:8]=odd byte). Pack into the correct 16-bit lane of the
@@ -617,6 +637,7 @@ end
 
 // Dynamic platform config and CAT702 key loading (from MRA rom index 1/4/5)
 reg [7:0]  zn_platform_r  = 8'h00;              // ioctl_index 1: platform id (0=Visco, 1=Raizing, 2=Taito, 3=Atlus, 4=Tecmo)
+reg [7:0]  zn_audio_board_r = 8'h00;           // ioctl_index 1 byte 1: external audio board (0 = none, 10/1A/1B)
 // Default: COH-1002M mg01 key (80 F2 30 38 F9 FD 1C E0, byte[0] at [7:0]).
 // Overwritten by MRA index 4 download when game ROM is loaded.
 reg [63:0] zn_cat702_key_a  = 64'hE01CFDF93830F280;
@@ -625,9 +646,13 @@ reg [63:0] zn_cat702_key_a  = 64'hE01CFDF93830F280;
 reg [63:0] zn_cat702_key_b_r = 64'hE0100CFDF938C280;
 
 always @(posedge clk_1x) begin
+	if (bios_download) zn_audio_board_r <= 8'h00;   // index 0 comes first in every MRA
 	if (ioctl_wr) begin
 		if (ioctl_index[5:0] == 1) begin
-			zn_platform_r <= ioctl_dout[7:0];
+			if (ioctl_addr[23:1] == 0) begin
+				zn_platform_r    <= ioctl_dout[7:0];
+				zn_audio_board_r <= ioctl_dout[15:8];   // only meaningful when the MRA part has 2 bytes
+			end
 		end else if (ioctl_index[5:0] == 4) begin
 			case (ioctl_addr[2:1])
 				2'd0: zn_cat702_key_a[15:0]  <= ioctl_dout;
@@ -703,6 +728,10 @@ wire        ramdownload_wr_pre = ioctl_wr & ioctl_addr[1];
 wire [15:0] dl_wr_lo16 = ramdownload_wrdata[15:0];
 wire [15:0] dl_wr_hi16 = ioctl_dout;
 
+// JTAG debug instruments (ISSP probes, SDRAM logic analyzer) are only built with
+// `define ZN_JTAG_DEBUG (e.g. VERILOG_MACRO "ZN_JTAG_DEBUG=1"); they cost ~400 ALMs
+// that the Raizing sound board needs.
+`ifdef ZN_JTAG_DEBUG
 altsource_probe #(
 	.sld_auto_instance_index ("YES"),
 	.sld_instance_index      (0),
@@ -717,10 +746,11 @@ altsource_probe #(
 	.source_clk (clk_1x),
 	.source_ena (1'b1)
 );
+`endif
 
 always @(posedge clk_1x) begin
    ramdownload_wr <= 0;
-   if (bios_download | fixedrom_download | bankedrom_download) begin
+   if (rom_download) begin
       if (ioctl_wr) begin
          if (~ioctl_addr[1]) begin
             ramdownload_wrdata[15:0] <= ioctl_dout;
@@ -730,6 +760,10 @@ always @(posedge clk_1x) begin
             else if (fixedrom_download)
                // Fixed ROM: SDRAM 0x480000 base (addition to handle overlapping bits)
                ramdownload_wraddr <= FIXEDROM_START[26:0] + {4'b0000, ioctl_addr[22:0]};
+            else if (sndprog_download)
+               ramdownload_wraddr <= SNDPROG_START + {7'd0, ioctl_addr[19:0]};
+            else if (sndsmp_download)
+               ramdownload_wraddr <= SNDSMP_START + {5'd0, ioctl_addr[21:0]};
             else
                // Banked ROM: SDRAM 0x800000 base, 24 banks × 1MB = 24MB
                ramdownload_wraddr <= BANKEDROM_START[26:0] + ioctl_addr[26:0];
@@ -996,6 +1030,22 @@ end
 
 ////////////////////////////  SYSTEM  ///////////////////////////////////
 
+// PSX video before the loading-screen sync generator (see VIDEO section)
+wire       psx_hs, psx_vs, psx_hbl, psx_vbl, psx_ce_pix, psx_interlace;
+wire [7:0] psx_r, psx_g, psx_b;
+
+// External sound board connections (instance below, after the PSX core)
+wire [15:0] spu_l, spu_r;
+wire  [7:0] ext_audio_board;
+wire        ext_snd_wr, ext_snd_rd, ext_snd_ack;
+wire [23:0] ext_snd_addr;
+wire [31:0] ext_snd_din, ext_snd_dout;
+wire  [3:0] ext_snd_be;
+wire        snd_mem_req;
+wire [26:0] snd_mem_addr;
+wire [127:0] sdram_ch3_dout128;
+wire [127:0] snd_diag;
+
 psx_mister
 psx
 (
@@ -1146,19 +1196,19 @@ psx
    .videoout_on     (~status[14]),
    .isPal           (isPal),
    .pal60           (status[15]),
-   .hsync           (hs),
-   .vsync           (vs),
-   .hblank          (hbl),
-   .vblank          (vbl),
+   .hsync           (psx_hs),
+   .vsync           (psx_vs),
+   .hblank          (psx_hbl),
+   .vblank          (psx_vbl),
    .DisplayWidth    (DisplayWidth),
    .DisplayHeight   (DisplayHeight),
    .DisplayOffsetX  (DisplayOffsetX),
    .DisplayOffsetY  (DisplayOffsetY),
-   .video_ce        (ce_pix),
-   .video_interlace (video_interlace),
-   .video_r         (r),
-   .video_g         (g),
-   .video_b         (b),
+   .video_ce        (psx_ce_pix),
+   .video_interlace (psx_interlace),
+   .video_r         (psx_r),
+   .video_g         (psx_g),
+   .video_b         (psx_b),
    .video_isPal     (video_isPal),
    .video_fbmode    (video_fbmode),
    .video_fb24      (video_fb24),
@@ -1250,8 +1300,8 @@ psx
    .snacMC(status[66]),
 
    //sound
-	.sound_out_left(AUDIO_L),
-	.sound_out_right(AUDIO_R),
+	.sound_out_left(spu_l),
+	.sound_out_right(spu_r),
    //savestates
    .increaseSSHeaderCount (!status[36]),
    .save_state            (ss_save),
@@ -1274,7 +1324,7 @@ psx
    .Cheats_BusWriteData(cheats_dout),
    .Cheats_Bus_ena(cheats_ena),
    .Cheats_BusReadData(cheats_din),
-   .Cheats_BusDone(sdramCh3_done),
+   .Cheats_BusDone(sdramCh3_done & ~snd_enable),
 
    // ZN-1 Arcade I/O
    .zn_p1_right   (joy[0]),
@@ -1299,6 +1349,14 @@ psx
    .zn_cat702_key  (zn_cat702_key_a),
    .zn_cat702_key_b(zn_cat702_key_b_r),
    .zn_platform    (zn_platform_r[3:0]),
+   .zn_ext_audio   (ext_audio_board),
+   .ext_snd_wr     (ext_snd_wr),
+   .ext_snd_rd     (ext_snd_rd),
+   .ext_snd_addr   (ext_snd_addr),
+   .ext_snd_din    (ext_snd_din),
+   .ext_snd_be     (ext_snd_be),
+   .ext_snd_dout   (ext_snd_dout),
+   .ext_snd_ack    (ext_snd_ack),
    .zn_ee_dl_wr    (zn_ee_dl_wr),
    .zn_ee_dl_addr  (zn_ee_dl_addr),
    .zn_ee_dl_data  (zn_ee_dl_data),
@@ -1307,6 +1365,37 @@ psx
    .zn_debug_val   (zn_debug_val),
    .zn_debug_addr  (zn_debug_addr),
    .zn_debug_words (zn_debug_words)
+);
+
+//////////////////////  EXTERNAL SOUND BOARD + MIX  //////////////////////////////
+// One board family per RBF (ZN_EXT_AUDIO_* macro); see docs/AUDIO_ARCHITECTURE.md.
+
+zn_ext_audio ext_audio
+(
+	.clk         (clk_1x),
+	.reset       (reset),
+	.pause       (isPaused),
+	.mra_board   (zn_audio_board_r),
+	.prog_loaded (snd_prog_loaded),
+	.smp_loaded  (snd_smp_loaded),
+	.active_board(ext_audio_board),
+	.enable      (snd_enable),
+	.bus_wr      (ext_snd_wr),
+	.bus_rd      (ext_snd_rd),
+	.bus_addr    (ext_snd_addr),
+	.bus_din     (ext_snd_din),
+	.bus_be      (ext_snd_be),
+	.bus_dout    (ext_snd_dout),
+	.bus_ack     (ext_snd_ack),
+	.mem_req     (snd_mem_req),
+	.mem_addr    (snd_mem_addr),
+	.mem_ack     (sdramCh3_done & ~rom_download),
+	.mem_data    (sdram_ch3_dout128),
+	.spu_l       (spu_l),
+	.spu_r       (spu_r),
+	.out_l       (AUDIO_L),
+	.out_r       (AUDIO_R),
+	.diag        (snd_diag)
 );
 
 ////////////////////////////  MEMORY  ///////////////////////////////////
@@ -1410,12 +1499,15 @@ sdram sdram
 	.ch2_be   (sdram_be),
 	.ch2_ready(sdram_writeack),
 
-	.ch3_addr ((bios_download | fixedrom_download | bankedrom_download) ? ramdownload_wraddr : {6'b0, cheats_addr}),
-	.ch3_din  ((bios_download | fixedrom_download | bankedrom_download) ? ramdownload_wrdata : cheats_dout),
+	// ch3: ROM download writes, else the Raizing sound board (128-bit line reads), else cheats
+	.ch3_addr (rom_download ? ramdownload_wraddr : snd_enable ? snd_mem_addr : {6'b0, cheats_addr}),
+	.ch3_din  (rom_download ? ramdownload_wrdata : cheats_dout),
 	.ch3_dout (cheats_din),
-	.ch3_req  ((bios_download | fixedrom_download | bankedrom_download) ? ramdownload_wr     : cheats_ena),
-	.ch3_rnw  ((bios_download | fixedrom_download | bankedrom_download) ? 1'b0 : cheats_rnw),
-	.ch3_be   ((bios_download | fixedrom_download | bankedrom_download) ? 4'b1111            : cheats_be),
+	.ch3_req  (rom_download ? ramdownload_wr     : snd_enable ? snd_mem_req  : cheats_ena),
+	.ch3_rnw  (rom_download ? 1'b0 : snd_enable ? 1'b1 : cheats_rnw),
+	.ch3_be   (rom_download ? 4'b1111            : snd_enable ? 4'b1111      : cheats_be),
+	.ch3_128  (~rom_download & snd_enable),
+	.ch3_dout128(sdram_ch3_dout128),
 	.ch3_ready(sdramCh3_done),
 
 	.dmafifo_adr  (sdram_dmafifo_adr),
@@ -1443,6 +1535,7 @@ wire        la_trig = sdram_req & sdram_rnw & (sdram_addr == la_trig_addr);
 wire [46:0] la_sample = { la_trig, sdram_dbg_state, sdram_dbg_drd1, SDRAM_A, SDRAM_DQ };
 
 wire [12:0] la_src;          // [8:0]=rdaddr, [9]=arm, [10]=pm_force_on, [11]=jtag_reset, [12]=trig 0x42C
+`ifdef ZN_JTAG_DEBUG
 wire [46:0] la_rddata;
 wire        la_frozen;
 wire [8:0]  la_wptr;
@@ -1492,6 +1585,9 @@ altsource_probe #(
 	.source_clk (clk_3x),
 	.source_ena (1'b1)
 );
+`else
+assign la_src = 13'd0;
+`endif
 // (probe_width raised 160 -> 256 for B-inst5; readout scripts detect length)
 // ================================================================================================
 
@@ -1554,6 +1650,8 @@ sdram sdram2
 	.ch3_dout(),
 	.ch3_req(1'b0),
 	.ch3_rnw(1'b1),
+	.ch3_128(1'b0),
+	.ch3_dout128(),
 	.ch3_ready(),
 
 	.dmafifo_adr  (0),
@@ -1630,12 +1728,50 @@ ddram_rotate_arb ddram_rotate_arb
 
 assign CLK_VIDEO = clk_vid;
 
-wire hs, vs, hbl, vbl, video_interlace, video_isPal, video_fbmode, video_fb24;
+// Loading-screen sync. The PSX core (and with it the GPU scan-out timing) is held in
+// reset for the whole ROM download, so the core produced no sync while MiSTer shows
+// its loading progress: fine on HDMI (the scaler makes its own timing) but a CRT had
+// nothing to lock to. While a download is in progress the video output comes from
+// this free-running generator instead: black 240p, 3413 clk_vid per line and 263
+// lines (the PSX NTSC line/frame rate), so the OSD is visible on analog outputs.
+// Horizontal timing is standard NTSC (4.7us sync, 4.7us back porch, 52.6us active,
+// 1.5us front porch) so MiSTer's OSD, which sizes and centres itself on the active
+// region, looks the same as on other cores. The pixel divider restarts every line
+// (3413 is not a multiple of 8) so the pixel grid is identical on every line.
+reg  [1:0] ld_sync;
+reg [11:0] ld_h;
+reg  [8:0] ld_v;
+reg  [2:0] ld_div;
+reg        ld_ce, ld_hs, ld_vs, ld_hbl, ld_vbl;
+always @(posedge clk_vid) begin
+	ld_sync <= {ld_sync[0], ioctl_download};
+	ld_div  <= (ld_h == 12'd3412) ? 3'd0 : ld_div + 1'd1;
+	ld_ce   <= (ld_div == 3'd0);
+	if (ld_h == 12'd3412) begin
+		ld_h <= 12'd0;
+		ld_v <= (ld_v == 9'd262) ? 9'd0 : ld_v + 1'd1;
+	end else ld_h <= ld_h + 1'd1;
+	ld_hs  <= (ld_h < 12'd252);                           // 4.7 us
+	ld_hbl <= (ld_h < 12'd504) || (ld_h >= 12'd3328);     // active 52.6 us = 353 px
+	ld_vbl <= (ld_v >= 9'd240);
+	ld_vs  <= (ld_v >= 9'd244) && (ld_v < 9'd247);
+end
+wire ld_active = ld_sync[1];
+
+wire hs              = ld_active ? ld_hs  : psx_hs;
+wire vs              = ld_active ? ld_vs  : psx_vs;
+wire hbl             = ld_active ? ld_hbl : psx_hbl;
+wire vbl             = ld_active ? ld_vbl : psx_vbl;
+wire ce_pix          = ld_active ? ld_ce  : psx_ce_pix;
+wire video_interlace = ld_active ? 1'b0   : psx_interlace;
+wire [7:0] r         = ld_active ? 8'd0   : psx_r;
+wire [7:0] g         = ld_active ? 8'd0   : psx_g;
+wire [7:0] b         = ld_active ? 8'd0   : psx_b;
+
+wire video_isPal, video_fbmode, video_fb24;
 
 wire [2:0] video_hResMode;
 
-wire ce_pix;
-wire [7:0] r,g,b;
 wire [6:0] zn_debug_out;  // DIAGNOSTIC build #17: verify Y-wrap fix. See psx_top.vhd.
 wire [31:0] zn_debug_val; // build #50: raw 32-bit SDRAM word latched at green anchor 0x1F644810
 wire [31:0] zn_debug_addr; // build #51: computed SDRAM byte address latched at green anchor (expect 0x00E44810)
@@ -1645,7 +1781,7 @@ wire [255:0] zn_debug_words; // build #52: 8 contiguous bank0 words [0x1F644800,
 // Expected loaded ROM sequence: 0=0x00007FFF 1=0 2=0 3=0 4=0x00200000 5=0x00200020 6=0x00200020 7=0x00400020.
 reg  [255:0] dbg_loadwords = 256'd0;
 // build #52/#53: overlay bit index — row = dbg_vpix[4:2] (word 0..7), col MSB-left = 31 - dbg_hpix[7:3]
-wire [7:0] dbg_word_bitidx = dbg_vpix[4:2]*8'd32 + (8'd31 - {3'b0, dbg_hpix[7:3]});
+wire [7:0] dbg_word_bitidx = {dbg_vpix[4:2], 5'd0} + (8'd31 - {3'b0, dbg_hpix[7:3]});
 wire       dbg_word_bit    = dbg_loadwords[dbg_word_bitidx];
 
 // Force progressive (480p) rendering while rotating: screen_rotate captures a
@@ -1749,7 +1885,8 @@ localparam reg [23:0] aspect_ratio_lut_pal[160] = '{
 
 logic [11:0] h_pos, v_pos, vb_pos, v_total;
 logic [9:0]  dbg_hpix;   // visible-area horizontal pixel counter (10-bit, max 1023 — no wrap for any PSX width)
-logic [4:0]  dbg_vpix;   // visible-area line counter
+logic [8:0]  dbg_vpix;   // visible-area line counter
+wire  [1:0]  dbg_snd_row = 2'(((dbg_vpix - 9'd24) >> 3));   // sound diag row 0..3 (lines 25..56)
 logic        dbg_hbl_prev, dbg_vbl_prev;
 logic [11:0] hb_start_lut[8];
 logic [11:0] hb_end_lut[8];
@@ -1855,6 +1992,16 @@ always_ff @(posedge CLK_VIDEO) if (CE_PIXEL) begin
 				video_aspect.red <= 8'h00; video_aspect.green <= 8'h00; video_aspect.blue <= 8'hFF;
 			end else begin
 				video_aspect.red <= 8'h00; video_aspect.green <= 8'h00; video_aspect.blue <= 8'h20;
+			end
+		end else if (dbg_vpix >= 9'd25 && dbg_vpix < 9'd57 && dbg_vpix[2:0] < 3'd7 && dbg_vpix[2:0] != 3'd0 && dbg_hpix < 10'd256) begin
+			// External sound board diagnostics (zn_ext_audio.sv "diag"): 4 rows (lines 25-30,
+			// 33-38, 41-46, 49-54) = words 0..3, MSB left, 8 px per bit, yellow = 1.
+			if (dbg_hpix[2:0] == 3'd7) begin
+				video_aspect.red <= 8'h00; video_aspect.green <= 8'h00; video_aspect.blue <= 8'h00;
+			end else if (snd_diag[{2'd3 - dbg_snd_row, 5'd31 - dbg_hpix[7:3]}]) begin
+				video_aspect.red <= 8'hFF; video_aspect.green <= 8'hFF; video_aspect.blue <= 8'h00;
+			end else begin
+				video_aspect.red <= 8'h30; video_aspect.green <= 8'h30; video_aspect.blue <= 8'h30;
 			end
 		end
 	end

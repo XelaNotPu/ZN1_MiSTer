@@ -1,0 +1,5 @@
+obj/
+*.exe
+*.raw
+*.wav
+model/ymf_tables.h

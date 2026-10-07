@@ -27,6 +27,28 @@ correctness fix to the Taito FX-1B FRAM power-on state (blank FRAM now reads
 `0xFF`, matching real hardware and MAME). Both were hardware-verified without
 regressions to the playable set.
 
+## Music: external sound boards
+
+The music of several ZN-1 games comes from a second sound system on the game ROM board,
+which the core did not implement (those games had sound effects only). This release adds
+two of those boards. They do not fit in one FPGA image next to the PlayStation hardware, so
+each board family has its own bitstream built from the same source (`ZN_EXT_AUDIO_*` macro),
+and each game's MRA selects it:
+
+| Bitstream | Sound board | Games (all regions/revisions) |
+|---|---|---|
+| `XNZN1RZ` | Raizing/Eighting: 68000 + Yamaha YMF271 | Brave Blade, Bloody Roar / Beastorizer |
+| `XNZN1FXA` | Taito FX-1A: Z80 + YM2610B + TC0140SYT | Psychic Force (2.4O, 2.4J, EX 2.0J) |
+| `XNZN1` | none | every other game (unchanged) |
+
+Music is confirmed on hardware in all three games. The sound ROMs come from the same game
+zips (MRA indices 6 and 7). The Raizing board is the one from the Brave Blade (with music)
+fork, generalized; the FX-1A board reuses jotego's JT10 (YM2610B) and TV80.
+
+Design, MAME comparisons and validation: [`docs/AUDIO_ARCHITECTURE.md`](docs/AUDIO_ARCHITECTURE.md),
+[`docs/AUDIO_VALIDATION.md`](docs/AUDIO_VALIDATION.md); MRA generation:
+[`docs/MRA_GENERATION.md`](docs/MRA_GENERATION.md).
+
 ## Supported games
 | Game | Licensee / BIOS | Status |
 |---|---|---|
@@ -34,12 +56,12 @@ regressions to the playable set.
 | **Aero Fighters Special** (USA) | Visco — `coh1002v` | **Playable** — attract, character select, gameplay |
 | **Logic Pro Adventure** (Japan) | Tecmo — `coh1002m` | **Playable** — full-colour title and puzzle play |
 | **1 on 1 Government** (Japan) | Tecmo — `coh1002m` | **Playable** — attract / demo play (slow first boot ~75 s while it initialises backup RAM) |
-| **Brave Blade** (World) | Raizing — `coh1002e` | **Playable** — attract, shooter gameplay; **sound effects only, no music** (see Known issues) |
-| **Bloody Roar** (Japan) | Raizing — `coh1002e` | **Playable** — attract ("ROARING") and gameplay; SFX only, no music |
+| **Brave Blade** (World) | Raizing — `coh1002e` | **Playable** — attract, shooter gameplay; **music** (`XNZN1RZ`) |
+| **Bloody Roar** (Japan) | Raizing — `coh1002e` | **Playable** — attract ("ROARING") and gameplay; **music** (`XNZN1RZ`) |
 | **G-Darius Ver.2** (2.03J) | Taito FX-1B — `coh1002t` | **Playable** — attract and gameplay; **sound effects only, no music** (see Known issues) |
 | **G-Darius** (2.01J) | Taito FX-1B — `coh1002t` | **Playable** — attract and gameplay; SFX only |
 | **G-Darius** (2.02O) | Taito FX-1B — `coh1002t` | **Playable** — full attract (new in this release: bank-register bit fix); SFX only |
-| **Psychic Force** (2.4O) | Taito FX-1A — `coh1000t` | **Playable** — full attract; SFX only |
+| **Psychic Force** (2.4O) | Taito FX-1A — `coh1000t` | **Playable** — full attract; **music** (`XNZN1FXA`) |
 | **Monster Farm Jump** (Japan) | Tecmo — `coh1002m` | **Playable** — full attract, ranking, gameplay demo (new in this release) |
 | **Tondemo Crisis** (Japan) | Tecmo — `coh1002m` | **Playable** — 3D attract, in-game scenes, title (new in this release) |
 | **Tecmo World Cup Millennium** (Japan) | Tecmo — `coh1002m` | **Playable** — 3D lineup, live demo match, stadium attract (new in this release) |
@@ -93,7 +115,9 @@ RELEASE-20260721/
 3. Select a game from the arcade menu.
 
 The `.mra` files reference the core as `ZN1`; MiSTer picks the newest dated
-`ZN1_*.rbf` in `_Arcade/cores/`.
+`ZN1_*.rbf` in `_Arcade/cores/`. The Brave Blade, Bloody Roar and Psychic Force
+MRAs reference the sound-board bitstreams `XNZN1RZ` / `XNZN1FXA` instead, so
+copy all `.rbf` files from `release/_Arcade/cores/`.
 
 ## Hardware requirements
 
@@ -141,12 +165,10 @@ unaffected by any of these.
 - **Vertical pause-screen centering.** With Pause Screen = Vertical the overlay
   reads in the correct orientation, but its logo/text centering is not yet
   pixel-perfect on every resolution — a cosmetic refinement for a later build.
-- **No music on Taito FX-1 titles.** The Taito Zoom / MN10200 sound
+- **No music on Taito FX-1B titles.** The Taito Zoom / MN10200 sound
   co-processor is not emulated; G-Darius, Ray Storm, etc. play **sound effects
-  only**. This is expected in this release.
-- **No music on Raizing/Eighting titles** (Brave Blade, Bloody Roar). Their
-  external M68000 + **YMF271** sound board is not emulated; sound effects (from
-  the PSX SPU) play, but music does not. Expected in this release.
+  only**. (Brave Blade, Bloody Roar and Psychic Force now have music — see
+  *Music: external sound boards*.)
 - *(Fixed in this release)* **Ray Storm**'s "ROM R-3 ERROR" is resolved — a
   leftover diagnostic in earlier cores overwrote 32 bytes of banked ROM after
   loading. The game now passes its self-test; first boot lands in its
@@ -195,6 +217,12 @@ This core derives from **PSX_MiSTer** by Robert Peip (FPGAzumSpass) and the
 CAT702 security, ROM banking, NVRAM/EEPROM/FRAM) is an independent
 re-implementation developed with reference to the MAME project's hardware
 documentation.
+
+The external sound boards use: **fx68k** (MC68000) by Jorge Cwik (GPL-3.0),
+**JT10/JT12** (YM2610B) by Jose Tejada (GPL-3.0), and **TV80** (Z80) by Guy
+Hutchison (MIT-style); licences and origins are next to each in `source/rtl/`.
+The YMF271 and TC0140SYT implementations follow MAME's (BSD-3-Clause) device
+models.
 
 ## Legal
 
